@@ -2,76 +2,46 @@ import json
 import sys
 from pathlib import Path
 import click
-from claude_autoresumer.models import Job, SelfHealingConfig
+from claude_autoresumer.models import Job
 from claude_autoresumer import queue as q_mod
 from claude_autoresumer import sandbox, daemon
-from claude_autoresumer.workflow import apply_template, WORKFLOW_TEMPLATES
 from claude_autoresumer.probe import probe as _probe_fn, ProbeError
 
 
 @click.group()
 def cli():
-    """Queue and run Claude Code jobs overnight, unattended."""
+    """Pin a Claude Code session and auto-resume it across usage-limit resets."""
 
 
 # ── Queue ─────────────────────────────────────────────────────────────────────
 
 @cli.group()
 def queue():
-    """Manage the overnight job queue."""
+    """Manage the job queue."""
 
 
 @queue.command("add")
-@click.option("--prompt", default=None, help="Task prompt for Claude")
+@click.option("--prompt", required=True, help="Task prompt for Claude")
 @click.option("--model", default="claude-sonnet-4-6", show_default=True)
 @click.option("--cwd", default=None, help="Working directory (default: current dir)")
-@click.option("--files", default="", help="Space-separated files/dirs to include in sandbox")
 @click.option("--file", "file_items", multiple=True, help="File/dir to include in sandbox; may be repeated")
-@click.option("--workflow", "workflow_template", default="minimal",
-              type=click.Choice(list(WORKFLOW_TEMPLATES)), show_default=True)
-@click.option("--self-heal", "self_heal", default="8h")
-@click.option("--no-self-heal", "self_heal", flag_value="none")
-@click.option("--resume", is_flag=True, default=False)
-@click.option("--checkpoint", default=None, type=click.Path(exists=True))
-def queue_add(prompt, model, cwd, files, file_items, workflow_template, self_heal, resume, checkpoint):
+@click.option("--max-retry-hours", default=24.0, show_default=True, type=float,
+              help="Give up if the job hasn't completed within this many hours of its first start")
+def queue_add(prompt, model, cwd, file_items, max_retry_hours):
     """Add a job to the queue."""
-    if resume:
-        if not checkpoint:
-            click.echo("--checkpoint is required with --resume", err=True)
-            sys.exit(1)
-        try:
-            data = json.loads(Path(checkpoint).read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            raise click.ClickException(f"Could not read checkpoint: {e}") from e
-        source_files = data.get("source_files", [])
-        _validate_job_inputs(data.get("cwd", cwd or str(Path.cwd())), source_files)
-        job = Job(
-            type="resume",
-            prompt=data["prompt"],
-            cwd=data.get("cwd", cwd or str(Path.cwd())),
-            model=data.get("model", model),
-            source_files=source_files,
-            workflow=apply_template(workflow_template),
-            self_healing=_parse_self_heal(self_heal),
-        )
-    else:
-        if not prompt:
-            click.echo("--prompt is required unless using --resume", err=True)
-            sys.exit(1)
-        source_files = [f for f in files.split() if f] + list(file_items)
-        effective_cwd = cwd or str(Path.cwd())
-        _validate_job_inputs(effective_cwd, source_files)
-        job = Job(
-            type="task",
-            prompt=prompt,
-            model=model,
-            cwd=effective_cwd,
-            source_files=source_files,
-            workflow=apply_template(workflow_template),
-            self_healing=_parse_self_heal(self_heal),
-        )
+    source_files = list(file_items)
+    effective_cwd = cwd or str(Path.cwd())
+    _validate_job_inputs(effective_cwd, source_files)
+    job = Job(
+        type="task",
+        prompt=prompt,
+        model=model,
+        cwd=effective_cwd,
+        source_files=source_files,
+        max_retry_hours=max_retry_hours,
+    )
     q_mod.add(job)
-    click.echo(f"Queued job {job.id[:8]} ({job.type}): {job.prompt[:60]}")
+    click.echo(f"Queued job {job.id[:8]}: {job.prompt[:60]}")
 
 
 @queue.command("list")
@@ -82,7 +52,7 @@ def queue_list():
         click.echo("Queue is empty.")
         return
     for job in jobs:
-        click.echo(f"[{job.status:8}] {job.id[:8]} | {job.type:6} | {job.prompt[:60]}")
+        click.echo(f"[{job.status:8}] {job.id[:8]} | {job.prompt[:60]}")
 
 
 @queue.command("remove")
@@ -104,10 +74,7 @@ def queue_clear():
 
 @cli.command()
 def start():
-    """Install and arm the LaunchAgent daemon.
-
-    Self-heal policy is set per-job via 'queue add --self-heal'.
-    """
+    """Install and arm the LaunchAgent daemon."""
     from claude_autoresumer.queue import _home
     daemon.install(bridge_home=str(_home()))
     click.echo("Daemon armed.")
@@ -137,7 +104,10 @@ def status():
                f"{counts['done']} done, {counts['failed']} failed")
     for job in jobs:
         marker = {"pending": "·", "running": "▶", "done": "✓", "failed": "✗"}.get(job.status, "?")
-        click.echo(f"  {marker} {job.id[:8]} {job.prompt[:50]}")
+        eta = ""
+        if job.next_eligible_at and job.status == "pending":
+            eta = f"  (eligible: {job.next_eligible_at})"
+        click.echo(f"  {marker} {job.id[:8]} {job.prompt[:50]}{eta}")
 
 
 @cli.command("_tick", hidden=True)
@@ -235,23 +205,6 @@ def install_skill():
     click.echo(f"Skill installed to {dest_dir / 'claude-autoresumer.md'}")
 
 
-# ── Self-heal parser ──────────────────────────────────────────────────────────
-
-def _parse_self_heal(value: str) -> SelfHealingConfig:
-    if value in ("none", "no-self-heal"):
-        return SelfHealingConfig(mode="single_session", max_hours=None, max_resets=None)
-    if value == "always":
-        return SelfHealingConfig(mode="always", max_hours=None, max_resets=None)
-    if value.endswith("h"):
-        return SelfHealingConfig(mode="time_bounded", max_hours=float(value[:-1]), max_resets=None)
-    if value.endswith("x"):
-        return SelfHealingConfig(mode="time_bounded", max_hours=None, max_resets=int(value[:-1]))
-    raise click.BadParameter(
-        f"Unrecognized self-heal format: {value!r}. "
-        "Use 'always', 'Xh' (hours), 'Nx' (resets), or 'none'."
-    )
-
-
 def _validate_job_inputs(cwd: str, source_files: list[str]) -> None:
     root = Path(cwd).expanduser().resolve()
     if not root.exists() or not root.is_dir():
@@ -260,17 +213,17 @@ def _validate_job_inputs(cwd: str, source_files: list[str]) -> None:
     for item in source_files:
         clean = item.rstrip("/")
         if not clean:
-            raise click.BadParameter("source file path cannot be empty", param_hint="--files")
+            raise click.BadParameter("source file path cannot be empty", param_hint="--file")
         rel = Path(clean)
         if rel.is_absolute() or ".." in rel.parts:
-            raise click.BadParameter(f"source file path must stay inside cwd: {item}", param_hint="--files")
+            raise click.BadParameter(f"source file path must stay inside cwd: {item}", param_hint="--file")
         candidate = (root / rel).resolve()
         try:
             candidate.relative_to(root)
         except ValueError as e:
-            raise click.BadParameter(f"source file path escapes cwd: {item}", param_hint="--files") from e
+            raise click.BadParameter(f"source file path escapes cwd: {item}", param_hint="--file") from e
         if not candidate.exists():
-            raise click.BadParameter(f"source file does not exist: {item}", param_hint="--files")
+            raise click.BadParameter(f"source file does not exist: {item}", param_hint="--file")
 
 
 if __name__ == "__main__":

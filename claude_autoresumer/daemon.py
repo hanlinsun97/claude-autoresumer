@@ -8,16 +8,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from claude_autoresumer.probe import probe, ProbeError, USAGE_LIMIT_PATTERNS, parse_reset_at
+from claude_autoresumer import queue as q_mod
+from claude_autoresumer import sandbox
+from claude_autoresumer.notify import notify
+
 RESUME_PROMPT = (
     "Usage limit was hit and has now reset. The workspace reflects your "
     "prior progress. Continue the task from where you stopped."
 )
-
-from claude_autoresumer.probe import probe, ProbeError, USAGE_LIMIT_PATTERNS
-from claude_autoresumer import queue as q_mod
-from claude_autoresumer import sandbox
-from claude_autoresumer.workflow import compile_prompt
-from claude_autoresumer.notify import notify
 
 LAUNCH_AGENTS_DIR = str(Path.home() / "Library" / "LaunchAgents")
 PLIST_LABEL = "com.claude-autoresumer"
@@ -48,11 +47,6 @@ def install(bridge_home: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(plist_content)
     subprocess.run(["launchctl", "load", "-w", str(path)], check=True)
-    # Clear stale self-heal counters so a stop/start cycle starts fresh.
-    for fname in ("daemon_started_at.txt", "reset_count.txt"):
-        f = Path(bridge_home) / fname
-        if f.exists():
-            f.unlink()
 
 
 def uninstall() -> None:
@@ -66,6 +60,15 @@ def _usage_limit_hit(output: str) -> bool:
     return any(re.search(pattern, output, re.IGNORECASE) for pattern in USAGE_LIMIT_PATTERNS)
 
 
+def _retry_window_expired(job) -> bool:
+    """True if the job has been retrying for longer than max_retry_hours."""
+    if not job.started_at:
+        return False
+    started = datetime.fromisoformat(job.started_at)
+    elapsed_hours = (datetime.now(timezone.utc) - started).total_seconds() / 3600
+    return elapsed_hours >= job.max_retry_hours
+
+
 def _run_job(job, bridge_home: str) -> str:
     prompt_file = Path(bridge_home) / "logs" / f"{job.id}-prompt.txt"
     prompt_file.parent.mkdir(parents=True, exist_ok=True)
@@ -77,9 +80,8 @@ def _run_job(job, bridge_home: str) -> str:
         ws = sandbox.create(job_id=job.id, cwd=job.cwd, source_files=job.source_files)
 
         if job.session_id is None:
-            # First attempt — pre-assign a session ID so we can resume later.
             session_id = str(uuid.uuid4())
-            prompt = compile_prompt(base_prompt=job.prompt, workflow=job.workflow, workspace_path=ws)
+            prompt = job.prompt
             cmd = [
                 "claude", "--dangerously-skip-permissions",
                 "--model", job.model,
@@ -89,13 +91,12 @@ def _run_job(job, bridge_home: str) -> str:
             q_mod.update(
                 job.id,
                 status="running",
-                started_at=datetime.now(timezone.utc).isoformat(),
+                started_at=job.started_at or datetime.now(timezone.utc).isoformat(),
                 workspace=ws,
                 session_id=session_id,
+                next_eligible_at=None,
             )
         else:
-            # Retry after a usage-limit defer — resume the same conversation
-            # so the model keeps reasoning, decisions, and partial-work context.
             prompt = RESUME_PROMPT
             cmd = [
                 "claude", "--dangerously-skip-permissions",
@@ -105,8 +106,8 @@ def _run_job(job, bridge_home: str) -> str:
             q_mod.update(
                 job.id,
                 status="running",
-                started_at=datetime.now(timezone.utc).isoformat(),
                 workspace=ws,
+                next_eligible_at=None,
             )
 
         prompt_file.write_text(prompt)
@@ -125,9 +126,16 @@ def _run_job(job, bridge_home: str) -> str:
                 f.write("\n--- STDERR ---\n")
                 f.write(result.stderr)
         if not success:
+            combined = f"{result.stdout}\n{result.stderr}"
             error = (result.stderr or result.stdout or f"claude exited with status {result.returncode}").strip()
-            if job.self_healing.mode != "single_session" and _usage_limit_hit(f"{result.stdout}\n{result.stderr}"):
-                q_mod.update(job.id, status="pending", error=error[:2000])
+            if _usage_limit_hit(combined) and not _retry_window_expired(job):
+                reset_at = parse_reset_at(combined)
+                q_mod.update(
+                    job.id,
+                    status="pending",
+                    error=error[:2000],
+                    next_eligible_at=reset_at.isoformat() if reset_at else None,
+                )
                 return "deferred"
             q_mod.update(job.id, error=error[:2000])
     except subprocess.TimeoutExpired as e:
@@ -151,49 +159,33 @@ def _run_job(job, bridge_home: str) -> str:
     return status
 
 
-def _record_start(bridge_home: str) -> None:
-    path = Path(bridge_home) / "daemon_started_at.txt"
-    if not path.exists():
-        path.write_text(datetime.now(timezone.utc).isoformat())
-
-
-def _increment_reset_count(bridge_home: str) -> int:
-    path = Path(bridge_home) / "reset_count.txt"
-    count = int(path.read_text()) + 1 if path.exists() else 1
-    path.write_text(str(count))
-    return count
-
-
-def _policy_expired(job, bridge_home: str) -> bool:
-    sh = job.self_healing
-    if sh.mode == "always":
-        return False
-    if sh.mode == "single_session":
-        return False
-
-    if sh.max_hours is not None:
-        start_file = Path(bridge_home) / "daemon_started_at.txt"
-        if start_file.exists():
-            started = datetime.fromisoformat(start_file.read_text())
-            elapsed = (datetime.now(timezone.utc) - started).total_seconds() / 3600
-            if elapsed >= sh.max_hours:
-                return True
-
-    if sh.max_resets is not None:
-        reset_file = Path(bridge_home) / "reset_count.txt"
-        count = int(reset_file.read_text()) if reset_file.exists() else 0
-        if count >= sh.max_resets:
-            return True
-
-    return False
-
-
 def tick(bridge_home: Optional[str] = None) -> str:
     from claude_autoresumer.queue import _home
     if bridge_home is None:
         bridge_home = str(_home())
 
-    _record_start(bridge_home)
+    job = q_mod.next_pending()
+    if job is None:
+        # When the queue drains the daemon uninstalls itself. The daemon is a
+        # one-shot arm, not a persistent service.
+        uninstall()
+        return "queue_empty"
+
+    # If the job has a known reset time and it hasn't arrived, skip the probe
+    # to save a Claude call.
+    if job.next_eligible_at:
+        try:
+            eligible = datetime.fromisoformat(job.next_eligible_at)
+            if datetime.now(timezone.utc) < eligible:
+                return "waiting_for_reset"
+        except ValueError:
+            pass
+
+    if _retry_window_expired(job):
+        notify(f"claude-autoresumer: retry window expired — {job.prompt[:60]}")
+        q_mod.update(job.id, status="failed", finished_at=datetime.now(timezone.utc).isoformat(),
+                     error=f"max_retry_hours ({job.max_retry_hours}h) exceeded")
+        return "retry_window_expired"
 
     try:
         available = probe()
@@ -203,26 +195,10 @@ def tick(bridge_home: Optional[str] = None) -> str:
     if not available:
         return "no_usage"
 
-    job = q_mod.next_pending()
-    if job is None:
-        # NOTE: when the queue drains the daemon uninstalls itself. This is by design:
-        # the daemon is a one-shot arm, not a persistent service. After the queue
-        # empties you must re-arm with `claude-autoresumer start` before queuing more jobs.
-        uninstall()
-        return "queue_empty"
-
-    if _policy_expired(job, bridge_home):
-        notify("claude-autoresumer: self-healing policy expired, stopping.")
-        uninstall()
-        return "policy_expired"
-
     outcome = _run_job(job, bridge_home=bridge_home)
     label = job.prompt[:60]
     if outcome == "deferred":
-        # Don't count a usage-limit defer against the Nx reset budget — the
-        # job didn't actually consume a reset slot.
-        notify(f"claude-autoresumer: usage limit hit, will retry — {label}")
+        notify(f"claude-autoresumer: usage limit hit, will resume on reset — {label}")
         return "deferred_usage_limit"
-    _increment_reset_count(bridge_home)
     notify(f"claude-autoresumer: job done — {label}" if outcome == "done" else f"claude-autoresumer: job FAILED — {label}")
     return "ran_job"

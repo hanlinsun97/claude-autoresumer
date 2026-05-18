@@ -11,36 +11,6 @@ def _now() -> str:
 
 
 @dataclass
-class WorkflowConfig:
-    pre_skills: list[str] = field(default_factory=list)
-    post_skills: list[str] = field(default_factory=list)
-    codex_iterations: int = 0
-    validation: Optional[str] = None
-    custom_instructions: Optional[str] = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> WorkflowConfig:
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
-class SelfHealingConfig:
-    mode: str = "time_bounded"  # "always" | "time_bounded" | "single_session"
-    max_hours: Optional[float] = 8.0
-    max_resets: Optional[int] = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> SelfHealingConfig:
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
 class Job:
     prompt: str
     cwd: str
@@ -53,29 +23,24 @@ class Job:
     model: str = "claude-sonnet-4-6"
     workspace: str = ""
     source_files: list[str] = field(default_factory=list)
-    workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
-    self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
+    max_retry_hours: float = 24.0
     error: Optional[str] = None
     session_id: Optional[str] = None
+    next_eligible_at: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> Job:
-        wf = WorkflowConfig.from_dict(d.pop("workflow", {}))
-        sh = SelfHealingConfig.from_dict(d.pop("self_healing", {}))
-        known = {k for k in cls.__dataclass_fields__} - {"workflow", "self_healing"}
-        return cls(
-            **{k: v for k, v in d.items() if k in known},
-            workflow=wf,
-            self_healing=sh,
-        )
+        # Tolerate legacy fields (workflow, self_healing) from older queue.json files.
+        d = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**d)
 
 
 @dataclass
 class Queue:
-    schema_version: str = "1.0"
+    schema_version: str = "2.0"
     jobs: list[Job] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -88,4 +53,4 @@ class Queue:
     def from_json(cls, raw: str) -> Queue:
         d = json.loads(raw)
         jobs = [Job.from_dict(j) for j in d.get("jobs", [])]
-        return cls(schema_version=d.get("schema_version", "1.0"), jobs=jobs)
+        return cls(schema_version=d.get("schema_version", "2.0"), jobs=jobs)

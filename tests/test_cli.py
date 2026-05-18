@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from click.testing import CliRunner
 from claude_autoresumer.cli import cli
@@ -13,9 +12,7 @@ def test_queue_add_basic(bridge_home):
         "queue", "add",
         "--prompt", "do something",
         "--cwd", str(bridge_home),
-        "--files", "src/",
-        "--workflow", "minimal",
-        "--no-self-heal",
+        "--file", "src/",
     ])
     assert result.exit_code == 0, result.output
     queue = q_mod.load()
@@ -45,10 +42,38 @@ def test_queue_add_rejects_paths_outside_cwd(bridge_home):
         "queue", "add",
         "--prompt", "do something",
         "--cwd", str(bridge_home),
-        "--files", "../secret.py",
+        "--file", "../secret.py",
     ])
     assert result.exit_code != 0
     assert "must stay inside cwd" in result.output
+
+
+def test_queue_add_accepts_max_retry_hours(bridge_home):
+    (bridge_home / "src").mkdir()
+    runner = CliRunner()
+    result = runner.invoke(cli, [
+        "queue", "add",
+        "--prompt", "do something",
+        "--cwd", str(bridge_home),
+        "--file", "src/",
+        "--max-retry-hours", "12",
+    ])
+    assert result.exit_code == 0, result.output
+    job = q_mod.load().jobs[0]
+    assert job.max_retry_hours == 12.0
+
+
+def test_queue_add_defaults_max_retry_hours_to_24(bridge_home):
+    (bridge_home / "src").mkdir()
+    runner = CliRunner()
+    runner.invoke(cli, [
+        "queue", "add",
+        "--prompt", "do something",
+        "--cwd", str(bridge_home),
+        "--file", "src/",
+    ])
+    job = q_mod.load().jobs[0]
+    assert job.max_retry_hours == 24.0
 
 
 def test_queue_list_shows_jobs(bridge_home):
@@ -65,24 +90,6 @@ def test_queue_clear_removes_pending(bridge_home):
     runner = CliRunner()
     runner.invoke(cli, ["queue", "clear"])
     assert q_mod.load().jobs == []
-
-
-def test_queue_add_resume_reads_checkpoint(bridge_home, tmp_path):
-    src = tmp_path / "src"
-    src.mkdir()
-    checkpoint = tmp_path / "checkpoint.json"
-    checkpoint.write_text(json.dumps({
-        "prompt": "resume this",
-        "cwd": str(tmp_path),
-        "source_files": ["src/"],
-        "model": "claude-opus-4-7",
-    }))
-    runner = CliRunner()
-    result = runner.invoke(cli, ["queue", "add", "--resume", "--checkpoint", str(checkpoint)])
-    assert result.exit_code == 0, result.output
-    queue = q_mod.load()
-    assert queue.jobs[0].type == "resume"
-    assert "resume this" in queue.jobs[0].prompt
 
 
 def test_status_shows_queue_summary(bridge_home):
@@ -107,18 +114,24 @@ def test_workspaces_list_empty(bridge_home):
     assert result.exit_code == 0
 
 
-def test_parse_self_heal_raises_on_bad_input():
-    import click
-    import pytest
-    from claude_autoresumer.cli import _parse_self_heal
-    with pytest.raises(click.BadParameter):
-        _parse_self_heal("foo")
-
-
-def test_start_command_has_no_self_heal_option(bridge_home):
-    """The start command should not accept --self-heal."""
+def test_start_command_rejects_unknown_self_heal_flag(bridge_home):
+    """The start command should not accept --self-heal (removed in the pivot)."""
     runner = CliRunner()
     result = runner.invoke(cli, ["start", "--self-heal", "8h"])
+    assert result.exit_code != 0
+
+
+def test_queue_add_rejects_unknown_workflow_flag(bridge_home):
+    """--workflow was removed in the pivot."""
+    (bridge_home / "src").mkdir()
+    runner = CliRunner()
+    result = runner.invoke(cli, [
+        "queue", "add",
+        "--prompt", "x",
+        "--cwd", str(bridge_home),
+        "--file", "src/",
+        "--workflow", "tdd",
+    ])
     assert result.exit_code != 0
 
 
