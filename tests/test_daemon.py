@@ -262,7 +262,7 @@ def test_tick_retry_window_check_runs_before_wait_for_reset(bridge_home, tmp_pat
     assert saved.status == "failed"
 
 
-def test_run_job_caps_absurd_reset_timestamp(bridge_home, tmp_path):
+def test_run_job_caps_absurd_reset_timestamp(bridge_home, tmp_path, capfd):
     """parse_reset_at can return a year-2099 value if claude lies; daemon should drop it."""
     src = tmp_path / "p"
     src.mkdir()
@@ -279,6 +279,30 @@ def test_run_job_caps_absurd_reset_timestamp(bridge_home, tmp_path):
     saved = q_mod.load().jobs[0]
     # The far-future timestamp must NOT be persisted — we'd never tick again.
     assert saved.next_eligible_at is None
+    captured = capfd.readouterr()
+    assert "dropping reset timestamp" in captured.err
+
+
+def test_run_job_accepts_weekly_limit_reset_within_horizon(bridge_home, tmp_path):
+    """A 7-day weekly-limit reset must be preserved (not dropped by the sanity cap)."""
+    src = tmp_path / "p"
+    src.mkdir()
+    (src / "f.py").write_text("x")
+    job = Job(prompt="work", cwd=str(src), source_files=["f.py"],
+              max_retry_hours=24 * 8.0)  # match the horizon
+    q_mod.add(job)
+
+    weekly_epoch = int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp())
+    err = f"Claude AI usage limit reached|{weekly_epoch}"
+    result = MagicMock(returncode=1, stdout="", stderr=err)
+    with patch("claude_autoresumer.daemon.subprocess.run", return_value=result):
+        assert daemon._run_job(job, bridge_home=str(bridge_home)) == "deferred"
+
+    saved = q_mod.load().jobs[0]
+    assert saved.next_eligible_at is not None
+    parsed = datetime.fromisoformat(saved.next_eligible_at)
+    expected = datetime.fromtimestamp(weekly_epoch, tz=timezone.utc)
+    assert abs((parsed - expected).total_seconds()) < 2
 
 
 def test_legacy_queue_schema_warns_on_load(bridge_home):

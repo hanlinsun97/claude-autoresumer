@@ -22,6 +22,10 @@ LAUNCH_AGENTS_DIR = str(Path.home() / "Library" / "LaunchAgents")
 PLIST_LABEL = "com.claude-autoresumer"
 PLIST_NAME = f"{PLIST_LABEL}.plist"
 
+# Upper bound for accepting a parsed reset timestamp. Anthropic's longest
+# documented window today is the 7-day weekly limit; 8 days gives a buffer.
+RESET_HORIZON_DAYS = 8
+
 
 def generate_plist(bridge_home: str) -> str:
     logs_dir = Path(bridge_home) / "logs"
@@ -130,12 +134,20 @@ def _run_job(job, bridge_home: str) -> str:
             error = (result.stderr or result.stdout or f"claude exited with status {result.returncode}").strip()
             if _usage_limit_hit(combined) and not _retry_window_expired(job):
                 reset_at = parse_reset_at(combined)
-                # Sanity-cap an absurd reset time — Anthropic's reset windows
-                # are hours, not weeks. Anything more than 24h out is treated
-                # as unparseable so we fall back to polling.
+                # Sanity-cap an absurd reset time. Anthropic's longest known
+                # window is the 7-day weekly limit; we allow 8 days for buffer.
+                # Anything further out is treated as a malformed timestamp,
+                # dropped, and logged so the operator can see why polling
+                # fell back instead of a known wait.
                 if reset_at is not None:
-                    horizon = datetime.now(timezone.utc) + timedelta(hours=24)
+                    horizon = datetime.now(timezone.utc) + timedelta(days=RESET_HORIZON_DAYS)
                     if reset_at > horizon:
+                        print(
+                            f"[claude-autoresumer] dropping reset timestamp "
+                            f"{reset_at.isoformat()} — more than {RESET_HORIZON_DAYS}d "
+                            f"out, falling back to polling.",
+                            file=sys.stderr,
+                        )
                         reset_at = None
                 q_mod.update(
                     job.id,
