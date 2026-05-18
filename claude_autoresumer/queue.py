@@ -5,11 +5,11 @@ import fcntl
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
-from claude_bridge.models import Job, Queue
+from claude_autoresumer.models import Job, Queue
 
 
 def _home() -> Path:
-    base = os.environ.get("CLAUDE_BRIDGE_HOME", str(Path.home() / ".claude-bridge"))
+    base = os.environ.get("CLAUDE_AUTORESUMER_HOME", str(Path.home() / ".claude-autoresumer"))
     p = Path(base)
     p.mkdir(parents=True, exist_ok=True)
     return p

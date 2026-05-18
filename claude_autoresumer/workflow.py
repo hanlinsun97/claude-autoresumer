@@ -1,4 +1,4 @@
-from claude_bridge.models import WorkflowConfig
+from claude_autoresumer.models import WorkflowConfig
 
 SKILL_INSTRUCTIONS: dict[str, str] = {
     "test-driven-development": (

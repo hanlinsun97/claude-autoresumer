@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 import pytest
-from claude_bridge import sandbox
+from claude_autoresumer import sandbox
 
 def test_create_workspace_copies_files(bridge_home, tmp_path):
     src = tmp_path / "project"

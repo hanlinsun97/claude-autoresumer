@@ -1,5 +1,5 @@
 ---
-name: claude-bridge
+name: claude-autoresumer
 description: >
   Use when the user says "set up overnight continuation", "continue while I sleep",
   or "queue a night job". Also invoke proactively when usage is critically low and
@@ -7,7 +7,7 @@ description: >
   arm the overnight daemon.
 ---
 
-# claude-bridge Skill
+# claude-autoresumer Skill
 
 You are helping the user hand off work to an overnight autonomous session.
 
@@ -24,18 +24,18 @@ Whether or not the night jobs are related to the current session, always ask:
 
 "Should I write a summary of today's session as a reference doc the night jobs can read? It's just for context — each night job runs in its own fresh Claude session, but having a 'what we did today' reference often helps the night session understand the codebase's recent history."
 
-If yes, write `~/.claude-bridge/session-summary-{timestamp}.md` with:
+If yes, write `~/.claude-autoresumer/session-summary-{timestamp}.md` with:
 - What was worked on today
 - Key decisions made and their rationale
 - Open questions or known gotchas
 - File paths the user has been editing
 
 Then in every queued job's prompt below, include this line at the end:
-"For context on today's daytime session, read `~/.claude-bridge/session-summary-{timestamp}.md` — purely reference, no action needed unless directly relevant."
+"For context on today's daytime session, read `~/.claude-autoresumer/session-summary-{timestamp}.md` — purely reference, no action needed unless directly relevant."
 
 ## Step 2: Write a checkpoint file
 
-Write a JSON file to `~/.claude-bridge/checkpoint-{timestamp}.json` with this structure:
+Write a JSON file to `~/.claude-autoresumer/checkpoint-{timestamp}.json` with this structure:
 
 ```json
 {
@@ -76,26 +76,26 @@ Say: "Want to queue any follow-up jobs? For example: 'refactor with Opus', 'run 
 Run these commands in sequence:
 
 ```bash
-claude-bridge queue add --resume --checkpoint ~/.claude-bridge/checkpoint-{timestamp}.json \
+claude-autoresumer queue add --resume --checkpoint ~/.claude-autoresumer/checkpoint-{timestamp}.json \
   --workflow {template} --self-heal {policy}
 ```
 
 For any additional jobs the user described:
 
 ```bash
-claude-bridge queue add --prompt "..." --model claude-opus-4-7 \
+claude-autoresumer queue add --prompt "..." --model claude-opus-4-7 \
   --files "..." --workflow {template}
 ```
 
 Then arm the daemon:
 
 ```bash
-claude-bridge start
-claude-bridge status
+claude-autoresumer start
+claude-autoresumer status
 ```
 
-Show the user the output of `claude-bridge status` so they can confirm the queue before going to bed.
+Show the user the output of `claude-autoresumer status` so they can confirm the queue before going to bed.
 
 ## Final message to user
 
-"The daemon is armed. I'll probe for usage every 10 minutes and continue your work automatically. If a job hits the usage limit mid-run, it'll resume the same Claude session once the limit resets — so reasoning and partial work carry across the reset, not just the files on disk. Check `claude-bridge status` in the morning, then `claude-bridge workspaces diff <job_id>` and `claude-bridge workspaces apply <job_id>` to review and accept the changes. Good night."
+"The daemon is armed. I'll probe for usage every 10 minutes and continue your work automatically. If a job hits the usage limit mid-run, it'll resume the same Claude session once the limit resets — so reasoning and partial work carry across the reset, not just the files on disk. Check `claude-autoresumer status` in the morning, then `claude-autoresumer workspaces diff <job_id>` and `claude-autoresumer workspaces apply <job_id>` to review and accept the changes. Good night."

@@ -2,7 +2,7 @@ import json
 import shutil
 import difflib
 from pathlib import Path
-from claude_bridge.queue import _home
+from claude_autoresumer.queue import _home
 
 
 class SandboxError(Exception):
@@ -62,7 +62,7 @@ def create(job_id: str, cwd: str, source_files: list[str]) -> str:
             if entry.name != ".claude":
                 raise SandboxError(
                     f"workspace {job_id} has unregistered files but no source_files.json; "
-                    f"run `claude-bridge workspaces discard {job_id}` and re-queue"
+                    f"run `claude-autoresumer workspaces discard {job_id}` and re-queue"
                 )
 
     if already_initialized:
@@ -72,19 +72,19 @@ def create(job_id: str, cwd: str, source_files: list[str]) -> str:
         if not spec_file.exists():
             raise SandboxError(
                 f"workspace {job_id} is missing its source_spec.json; "
-                f"run `claude-bridge workspaces discard {job_id}` and re-queue"
+                f"run `claude-autoresumer workspaces discard {job_id}` and re-queue"
             )
         try:
             prior_spec = json.loads(spec_file.read_text())
         except (json.JSONDecodeError, OSError) as e:
             raise SandboxError(
                 f"workspace {job_id} has a corrupt source_spec.json ({e}); "
-                f"run `claude-bridge workspaces discard {job_id}` and re-queue"
+                f"run `claude-autoresumer workspaces discard {job_id}` and re-queue"
             ) from e
         if prior_spec != list(source_files):
             raise SandboxError(
                 f"workspace {job_id} was initialized with a different source_files list; "
-                f"run `claude-bridge workspaces discard {job_id}` and re-queue"
+                f"run `claude-autoresumer workspaces discard {job_id}` and re-queue"
             )
     else:
         copied_files: set[str] = set()

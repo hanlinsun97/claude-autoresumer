@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 from click.testing import CliRunner
-from claude_bridge.cli import cli
-from claude_bridge import queue as q_mod
-from claude_bridge import sandbox
+from claude_autoresumer.cli import cli
+from claude_autoresumer import queue as q_mod
+from claude_autoresumer import sandbox
 
 
 def test_queue_add_basic(bridge_home):
@@ -52,7 +52,7 @@ def test_queue_add_rejects_paths_outside_cwd(bridge_home):
 
 
 def test_queue_list_shows_jobs(bridge_home):
-    from claude_bridge.models import Job
+    from claude_autoresumer.models import Job
     q_mod.add(Job(prompt="list me", cwd="/tmp"))
     runner = CliRunner()
     result = runner.invoke(cli, ["queue", "list"])
@@ -60,7 +60,7 @@ def test_queue_list_shows_jobs(bridge_home):
 
 
 def test_queue_clear_removes_pending(bridge_home):
-    from claude_bridge.models import Job
+    from claude_autoresumer.models import Job
     q_mod.add(Job(prompt="clear me", cwd="/tmp"))
     runner = CliRunner()
     runner.invoke(cli, ["queue", "clear"])
@@ -86,7 +86,7 @@ def test_queue_add_resume_reads_checkpoint(bridge_home, tmp_path):
 
 
 def test_status_shows_queue_summary(bridge_home):
-    from claude_bridge.models import Job
+    from claude_autoresumer.models import Job
     q_mod.add(Job(prompt="p1", cwd="/tmp"))
     runner = CliRunner()
     result = runner.invoke(cli, ["status"])
@@ -96,7 +96,7 @@ def test_status_shows_queue_summary(bridge_home):
 def test_probe_command_exits_0_when_available(bridge_home):
     from unittest.mock import patch
     runner = CliRunner()
-    with patch("claude_bridge.cli._probe_fn", return_value=True):
+    with patch("claude_autoresumer.cli._probe_fn", return_value=True):
         result = runner.invoke(cli, ["probe"])
     assert result.exit_code == 0
 
@@ -110,7 +110,7 @@ def test_workspaces_list_empty(bridge_home):
 def test_parse_self_heal_raises_on_bad_input():
     import click
     import pytest
-    from claude_bridge.cli import _parse_self_heal
+    from claude_autoresumer.cli import _parse_self_heal
     with pytest.raises(click.BadParameter):
         _parse_self_heal("foo")
 

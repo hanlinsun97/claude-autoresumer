@@ -13,14 +13,14 @@ RESUME_PROMPT = (
     "prior progress. Continue the task from where you stopped."
 )
 
-from claude_bridge.probe import probe, ProbeError, USAGE_LIMIT_PATTERNS
-from claude_bridge import queue as q_mod
-from claude_bridge import sandbox
-from claude_bridge.workflow import compile_prompt
-from claude_bridge.notify import notify
+from claude_autoresumer.probe import probe, ProbeError, USAGE_LIMIT_PATTERNS
+from claude_autoresumer import queue as q_mod
+from claude_autoresumer import sandbox
+from claude_autoresumer.workflow import compile_prompt
+from claude_autoresumer.notify import notify
 
 LAUNCH_AGENTS_DIR = str(Path.home() / "Library" / "LaunchAgents")
-PLIST_LABEL = "com.claude-bridge"
+PLIST_LABEL = "com.claude-autoresumer"
 PLIST_NAME = f"{PLIST_LABEL}.plist"
 
 
@@ -29,7 +29,7 @@ def generate_plist(bridge_home: str) -> str:
     logs_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "Label": PLIST_LABEL,
-        "ProgramArguments": [sys.executable, "-m", "claude_bridge.cli", "_tick", "--home", bridge_home],
+        "ProgramArguments": [sys.executable, "-m", "claude_autoresumer.cli", "_tick", "--home", bridge_home],
         "StartInterval": 600,
         "RunAtLoad": True,
         "StandardOutPath": str(logs_dir / "daemon.log"),
@@ -189,7 +189,7 @@ def _policy_expired(job, bridge_home: str) -> bool:
 
 
 def tick(bridge_home: Optional[str] = None) -> str:
-    from claude_bridge.queue import _home
+    from claude_autoresumer.queue import _home
     if bridge_home is None:
         bridge_home = str(_home())
 
@@ -207,12 +207,12 @@ def tick(bridge_home: Optional[str] = None) -> str:
     if job is None:
         # NOTE: when the queue drains the daemon uninstalls itself. This is by design:
         # the daemon is a one-shot arm, not a persistent service. After the queue
-        # empties you must re-arm with `claude-bridge start` before queuing more jobs.
+        # empties you must re-arm with `claude-autoresumer start` before queuing more jobs.
         uninstall()
         return "queue_empty"
 
     if _policy_expired(job, bridge_home):
-        notify("claude-bridge: self-healing policy expired, stopping.")
+        notify("claude-autoresumer: self-healing policy expired, stopping.")
         uninstall()
         return "policy_expired"
 
@@ -221,8 +221,8 @@ def tick(bridge_home: Optional[str] = None) -> str:
     if outcome == "deferred":
         # Don't count a usage-limit defer against the Nx reset budget — the
         # job didn't actually consume a reset slot.
-        notify(f"claude-bridge: usage limit hit, will retry — {label}")
+        notify(f"claude-autoresumer: usage limit hit, will retry — {label}")
         return "deferred_usage_limit"
     _increment_reset_count(bridge_home)
-    notify(f"claude-bridge: job done — {label}" if outcome == "done" else f"claude-bridge: job FAILED — {label}")
+    notify(f"claude-autoresumer: job done — {label}" if outcome == "done" else f"claude-autoresumer: job FAILED — {label}")
     return "ran_job"

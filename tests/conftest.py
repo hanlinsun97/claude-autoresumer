@@ -3,8 +3,8 @@ from pathlib import Path
 
 @pytest.fixture
 def bridge_home(tmp_path, monkeypatch):
-    """Redirect ~/.claude-bridge to a temp dir for all tests."""
-    home = tmp_path / ".claude-bridge"
+    """Redirect ~/.claude-autoresumer to a temp dir for all tests."""
+    home = tmp_path / ".claude-autoresumer"
     home.mkdir()
-    monkeypatch.setenv("CLAUDE_BRIDGE_HOME", str(home))
+    monkeypatch.setenv("CLAUDE_AUTORESUMER_HOME", str(home))
     return home

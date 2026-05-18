@@ -1,5 +1,5 @@
-from claude_bridge.models import WorkflowConfig
-from claude_bridge.workflow import compile_prompt, apply_template, WORKFLOW_TEMPLATES
+from claude_autoresumer.models import WorkflowConfig
+from claude_autoresumer.workflow import compile_prompt, apply_template, WORKFLOW_TEMPLATES
 
 
 def test_compile_minimal_prompt():

@@ -2,11 +2,11 @@ import json
 import sys
 from pathlib import Path
 import click
-from claude_bridge.models import Job, SelfHealingConfig
-from claude_bridge import queue as q_mod
-from claude_bridge import sandbox, daemon
-from claude_bridge.workflow import apply_template, WORKFLOW_TEMPLATES
-from claude_bridge.probe import probe as _probe_fn, ProbeError
+from claude_autoresumer.models import Job, SelfHealingConfig
+from claude_autoresumer import queue as q_mod
+from claude_autoresumer import sandbox, daemon
+from claude_autoresumer.workflow import apply_template, WORKFLOW_TEMPLATES
+from claude_autoresumer.probe import probe as _probe_fn, ProbeError
 
 
 @click.group()
@@ -108,10 +108,10 @@ def start():
 
     Self-heal policy is set per-job via 'queue add --self-heal'.
     """
-    from claude_bridge.queue import _home
+    from claude_autoresumer.queue import _home
     daemon.install(bridge_home=str(_home()))
     click.echo("Daemon armed.")
-    click.echo("Use 'claude-bridge status' to monitor progress.")
+    click.echo("Use 'claude-autoresumer status' to monitor progress.")
 
 
 @cli.command()
@@ -129,7 +129,7 @@ def status():
     for job in jobs:
         counts[job.status] = counts.get(job.status, 0) + 1
 
-    plist = Path.home() / "Library" / "LaunchAgents" / "com.claude-bridge.plist"
+    plist = Path.home() / "Library" / "LaunchAgents" / "com.claude-autoresumer.plist"
     daemon_state = "armed" if plist.exists() else "stopped"
 
     click.echo(f"Daemon:  {daemon_state}")
@@ -157,7 +157,7 @@ def workspaces():
 @workspaces.command("list")
 def workspaces_list():
     """List all workspaces."""
-    from claude_bridge.queue import _home
+    from claude_autoresumer.queue import _home
     ws_root = _home() / "workspaces"
     if not ws_root.exists() or not any(ws_root.iterdir()):
         click.echo("No workspaces found.")
@@ -226,13 +226,13 @@ def probe_cmd():
 
 @cli.command("install-skill")
 def install_skill():
-    """Copy the claude-bridge skill to ~/.claude/skills/."""
+    """Copy the claude-autoresumer skill to ~/.claude/skills/."""
     import shutil
-    src = Path(__file__).parent / "skills" / "claude-bridge.md"
+    src = Path(__file__).parent / "skills" / "claude-autoresumer.md"
     dest_dir = Path.home() / ".claude" / "skills"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest_dir / "claude-bridge.md")
-    click.echo(f"Skill installed to {dest_dir / 'claude-bridge.md'}")
+    shutil.copy2(src, dest_dir / "claude-autoresumer.md")
+    click.echo(f"Skill installed to {dest_dir / 'claude-autoresumer.md'}")
 
 
 # ── Self-heal parser ──────────────────────────────────────────────────────────

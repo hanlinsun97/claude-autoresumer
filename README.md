@@ -1,16 +1,16 @@
-# claude-bridge
+# claude-autoresumer
 
 Queue Claude Code jobs to run overnight, unattended. Go to bed; wake up to finished work.
 
 ## How it works
 
 1. Before bed, queue one or more jobs (or let Claude do it via the built-in skill)
-2. Arm the daemon: `claude-bridge start`
+2. Arm the daemon: `claude-autoresumer start`
 3. The daemon wakes every 10 minutes and checks if your Claude usage has reset
 4. When usage is available, it runs the next job headlessly in an isolated sandbox
-5. In the morning: `claude-bridge status`, review diffs, apply the changes you want
+5. In the morning: `claude-autoresumer status`, review diffs, apply the changes you want
 
-Your original files are **never touched**. All work happens in `~/.claude-bridge/workspaces/`.
+Your original files are **never touched**. All work happens in `~/.claude-autoresumer/workspaces/`.
 
 ## Requirements
 
@@ -21,15 +21,15 @@ Your original files are **never touched**. All work happens in `~/.claude-bridge
 ## Install
 
 ```bash
-pip install claude-bridge
-claude-bridge install-skill   # adds the Claude Code skill to ~/.claude/skills/
+pip install claude-autoresumer
+claude-autoresumer install-skill   # adds the Claude Code skill to ~/.claude/skills/
 ```
 
 ## Quick start
 
 ```bash
 # Queue a job (self-heal policy is set per job, not on the daemon)
-claude-bridge queue add \
+claude-autoresumer queue add \
   --prompt "Refactor the auth module for clarity and add missing tests" \
   --model claude-opus-4-7 \
   --file src/auth/ \
@@ -38,16 +38,16 @@ claude-bridge queue add \
   --self-heal 8h
 
 # Arm the daemon
-claude-bridge start
+claude-autoresumer start
 
 # Morning: check results
-claude-bridge status
-claude-bridge workspaces diff <job_id>
-claude-bridge workspaces apply <job_id>
+claude-autoresumer status
+claude-autoresumer workspaces diff <job_id>
+claude-autoresumer workspaces apply <job_id>
 ```
 
 > **Note:** After the queue drains, the daemon stops and uninstalls itself. To run
-> more jobs, re-queue them and re-arm with `claude-bridge start`.
+> more jobs, re-queue them and re-arm with `claude-autoresumer start`.
 
 ## From inside Claude Code
 
@@ -75,14 +75,14 @@ Claude will write the checkpoint, ask which files to include, and arm the daemon
 
 ## Safety
 
-- Original files are never modified — all work is in `~/.claude-bridge/workspaces/<job_id>/`
+- Original files are never modified — all work is in `~/.claude-autoresumer/workspaces/<job_id>/`
 - You explicitly `apply` changes you want; everything else is discarded
 - The workspace has a `.claude/settings.json` granting the night session broad permissions **only inside the sandbox**
 - Queued source paths must be relative to `--cwd`; absolute paths and `..` segments are rejected
 
 ## Session continuity across usage resets
 
-When a job hits the usage limit mid-run, claude-bridge defers it back to `pending`
+When a job hits the usage limit mid-run, claude-autoresumer defers it back to `pending`
 and retries on the next tick after the quota resets. Each job is pinned to a
 single Claude Code session ID (via `--session-id` on first run, `--resume` on
 retry), so the model keeps its prior reasoning, decisions, and partial-work
@@ -98,19 +98,19 @@ up from the last completed turn plus the workspace file state.
 ## Commands
 
 ```
-claude-bridge queue add          Queue a new job
-claude-bridge queue list         List all jobs
-claude-bridge queue remove       Remove a pending job
-claude-bridge queue clear        Remove all pending jobs
-claude-bridge start              Arm the daemon
-claude-bridge stop               Disarm the daemon
-claude-bridge status             Show daemon + queue summary
-claude-bridge workspaces list    List workspaces
-claude-bridge workspaces diff    Show diff vs originals
-claude-bridge workspaces apply   Apply changes (see note below)
-claude-bridge workspaces discard Delete a workspace
-claude-bridge probe              Check if usage is available now
-claude-bridge install-skill      Install the Claude Code skill
+claude-autoresumer queue add          Queue a new job
+claude-autoresumer queue list         List all jobs
+claude-autoresumer queue remove       Remove a pending job
+claude-autoresumer queue clear        Remove all pending jobs
+claude-autoresumer start              Arm the daemon
+claude-autoresumer stop               Disarm the daemon
+claude-autoresumer status             Show daemon + queue summary
+claude-autoresumer workspaces list    List workspaces
+claude-autoresumer workspaces diff    Show diff vs originals
+claude-autoresumer workspaces apply   Apply changes (see note below)
+claude-autoresumer workspaces discard Delete a workspace
+claude-autoresumer probe              Check if usage is available now
+claude-autoresumer install-skill      Install the Claude Code skill
 ```
 
 ## Known limitations

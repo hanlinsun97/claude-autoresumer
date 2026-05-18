@@ -1,6 +1,6 @@
 import pytest
-from claude_bridge.models import Job
-from claude_bridge import queue as q_mod
+from claude_autoresumer.models import Job
+from claude_autoresumer import queue as q_mod
 
 
 def test_load_empty_queue(bridge_home):
