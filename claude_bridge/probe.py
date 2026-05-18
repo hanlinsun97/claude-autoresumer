@@ -15,10 +15,16 @@ class ProbeError(Exception):
 
 
 def probe() -> bool:
-    """Return True if Claude Code usage is currently available."""
+    """Return True if Claude Code usage is currently available.
+
+    Returns False only when the response clearly indicates a usage/rate/quota
+    limit. Other non-zero exits (auth errors, network failures, bad flags)
+    raise ProbeError so the caller can surface the real cause instead of
+    silently treating every failure as "usage limit."
+    """
     try:
         result = subprocess.run(
-            ["claude", "-p", ".", "--max-tokens", "1"],
+            ["claude", "-p", "."],
             capture_output=True,
             text=True,
             timeout=30,
@@ -28,9 +34,11 @@ def probe() -> bool:
     except FileNotFoundError as e:
         raise ProbeError("claude CLI not found — is Claude Code installed?") from e
 
-    combined = (result.stdout + result.stderr).lower()
-    if any(re.search(p, combined) for p in USAGE_LIMIT_PATTERNS):
+    combined = result.stdout + result.stderr
+    if any(re.search(p, combined, re.IGNORECASE) for p in USAGE_LIMIT_PATTERNS):
         return False
     if result.returncode != 0:
-        return False
+        snippet = (result.stderr or result.stdout or "").strip().splitlines()
+        head = snippet[0] if snippet else f"exit status {result.returncode}"
+        raise ProbeError(f"claude -p exited {result.returncode}: {head}")
     return True

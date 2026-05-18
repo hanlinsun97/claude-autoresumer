@@ -213,15 +213,15 @@ def probe_cmd():
     """Test if Claude Code usage is currently available."""
     try:
         available = _probe_fn()
-        if available:
-            click.echo("Usage available.")
-            sys.exit(0)
-        else:
-            click.echo("Usage limit active — not available yet.")
-            sys.exit(1)
     except ProbeError as e:
         click.echo(f"Probe error: {e}", err=True)
+        click.echo("Run `claude -p .` directly to see the full error.", err=True)
         sys.exit(2)
+    if available:
+        click.echo("Usage available.")
+        sys.exit(0)
+    click.echo("Usage limit active — not available yet.")
+    sys.exit(1)
 
 
 @cli.command("install-skill")
